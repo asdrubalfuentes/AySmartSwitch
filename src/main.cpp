@@ -28,7 +28,7 @@ void loop() {
 		}
 	}
 
-	if (!mqtt.isConnected()) {
+	if (!mqttIsConnected()) {
 		ledOn();
 		connect();
 	}

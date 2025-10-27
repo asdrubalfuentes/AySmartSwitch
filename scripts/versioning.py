@@ -47,7 +47,7 @@ def _sanitize_version_base(text: str) -> str:
         return "01.00"
 
 
-def before_build(env):
+def before_build(target, source, env):
     project_dir = Path(env["PROJECT_DIR"])  # type: ignore
 
     version_file = project_dir / "VERSION"
@@ -77,6 +77,12 @@ def before_build(env):
     # Example: esp01_1m-01.02.125
     env.Replace(PROGNAME=f"${{PIOENV}}-{fw_version_short}")
 
-# Hook
-Import("env")
-env.AddPreAction("buildprog", before_build)
+# Hook (solo cuando se ejecuta dentro de PlatformIO/SCons)
+try:
+    from SCons.Script import Import as _SConsImport  # type: ignore
+    _SConsImport("env")
+    env.AddPreAction("buildprog", before_build)  # type: ignore # noqa
+except Exception:
+    # Si se ejecuta este archivo con `python scripts/versioning.py`, no hay entorno SCons.
+    if __name__ == "__main__":
+        print("versioning.py: este script está diseñado para ejecutarse desde PlatformIO (extra_scripts).")

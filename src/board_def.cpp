@@ -1,4 +1,14 @@
 #include "board_def.h"
+#if defined(ESP8266)
+#include <ESP8266HTTPClient.h>
+#include <Ticker.h>
+#include <Updater.h>
+#else
+#include <HTTPClient.h>
+#include <Ticker.h>
+#include <Update.h>
+#endif
+#include <AsyncMqttClient.h>
 
 // Globals
 String ssid = "";
@@ -15,10 +25,10 @@ String TOPICO_SUB = "";
 String TOPICO_PUB = "";
 String TOPICO_PUB_HEARTBIT = "";
 
-WiFiClient netClient;
-MQTTPubSubClient mqtt;
-
-static AsyncWebServer server(80);
+static AsyncMqttClient mqttClient;
+static Ticker mqttReconnectTimer;
+static Ticker wifiReconnectTimer;
+static bool mqttCallbacksInit = false;
 
 static void computeIdAndTopics() {
 #if defined(ESP8266)
@@ -42,30 +52,30 @@ static void computeIdAndTopics() {
 void initBoard() {
     computeIdAndTopics();
     pinMode(RELAY_PIN, OUTPUT);
-    pinMode(LED_BUILTIN, OUTPUT);
+    pinMode(LED_PIN, OUTPUT);
     // Ensure known state
     digitalWrite(RELAY_PIN, LOW);
 #if defined(ESP8266)
     // LED usually active low on ESP-01S
-    digitalWrite(LED_BUILTIN, HIGH);
+    digitalWrite(LED_PIN, HIGH);
 #else
-    digitalWrite(LED_BUILTIN, LOW);
+    digitalWrite(LED_PIN, LOW);
 #endif
 }
 
 void ledOn() {
 #if defined(ESP8266)
-    digitalWrite(LED_BUILTIN, LOW);
+    digitalWrite(LED_PIN, LOW);
 #else
-    digitalWrite(LED_BUILTIN, HIGH);
+    digitalWrite(LED_PIN, HIGH);
 #endif
 }
 
 void ledOff() {
 #if defined(ESP8266)
-    digitalWrite(LED_BUILTIN, HIGH);
+    digitalWrite(LED_PIN, HIGH);
 #else
-    digitalWrite(LED_BUILTIN, LOW);
+    digitalWrite(LED_PIN, LOW);
 #endif
 }
 
@@ -80,16 +90,7 @@ void beginWiFi(const String& ssid_, const String& pass_) {
     }
 }
 
-void setupOTA() {
-    // Endpoint simple de version
-    server.on("/version", HTTP_GET, [](AsyncWebServerRequest* request) {
-        String body = String("{\n  \"version\": \"") + getFwVersion() + "\",\n  \"short\": \"" + getFwVersionShort() + "\"\n}";
-        request->send(200, "application/json", body);
-    });
-
-    AsyncElegantOTA.begin(&server);
-    server.begin();
-}
+void setupOTA() { /* no-op, solo OTA remoto via HTTP */ }
 
 static void ensureWiFiConnected() {
     if (WiFi.status() == WL_CONNECTED) return;
@@ -119,85 +120,75 @@ static void ensureWiFiConnected() {
     }
 }
 
-static void subscribeTopics() {
-    // Log all messages
-    mqtt.subscribe([](const String& topic, const String& payload, const size_t size) {
-        Serial.println("mqtt received: " + topic + " - " + payload);
-    });
-
-    // Command handler for relay
-    mqtt.subscribe(TOPICO_SUB, [](const String& payload, const size_t size) {
-        Serial.print(TOPICO_SUB);
-        Serial.println(payload);
-        if (payload == String("Rele Pulsado")) {
-            mqtt.publish(TOPICO_PUB, "Puerta 1");
+static void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total) {
+    String t(topic);
+    String p;
+    p.reserve(len);
+    for (size_t i = 0; i < len; ++i) p += payload[i];
+    Serial.println("mqtt received: " + t + " - " + p);
+    if (t == TOPICO_SUB) {
+        if (p == String("Rele Pulsado")) {
+            mqttClient.publish(TOPICO_PUB.c_str(), 0, false, "Puerta 1");
             digitalWrite(RELAY_PIN, HIGH);
             delay(200);
             digitalWrite(RELAY_PIN, LOW);
         }
-    });
+    }
+}
+
+static void tryConnectMqtt();
+
+static void onMqttConnect(bool sessionPresent) {
+    Serial.println("MQTT connected");
+    ledOff();
+    // Subscribe topics
+    mqttClient.subscribe(TOPICO_SUB.c_str(), 0);
+    // Heartbeat up
+    mqttClient.publish(TOPICO_PUB_HEARTBIT.c_str(), 0, false, "up");
+}
+
+static void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
+    Serial.println("MQTT disconnected");
+    ledOn();
+    mqttReconnectTimer.once(2.0f, tryConnectMqtt);
+}
+
+static void tryConnectMqtt() {
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.println("Connecting to MQTT...");
+        mqttClient.connect();
+    } else {
+        Serial.println("WiFi not connected, retrying WiFi...");
+        WiFi.reconnect();
+        mqttReconnectTimer.once(2.0f, tryConnectMqtt);
+    }
 }
 
 void connect() {
     ensureWiFiConnected();
-    if (WiFi.status() != WL_CONNECTED) {
-        return;
+    if (!mqttCallbacksInit) {
+        mqttCallbacksInit = true;
+        mqttClient.onConnect(onMqttConnect);
+        mqttClient.onDisconnect(onMqttDisconnect);
+        mqttClient.onMessage(onMqttMessage);
+        mqttClient.setServer(mqttServer, mqttPort);
+        mqttClient.setClientId((String("aySmartSwitch-") + idUnico).c_str());
     }
-
-    Serial.print("connecting to host...");
-    netClient.stop();
-    uint8_t tries = 0;
-    while (!netClient.connect(mqttServer, mqttPort)) {
-        Serial.print(".");
-        delay(500);
-        if (WiFi.status() != WL_CONNECTED) {
-            Serial.println(" WiFi disconnected");
-            ensureWiFiConnected();
-        }
-        if (++tries > 60) { // ~30s
-            Serial.println(" broker timeout");
-            return;
-        }
-        yield();
-    }
-    Serial.println(" connected!");
-
-    Serial.print("connecting to mqtt broker...");
-    mqtt.disconnect();
-    mqtt.begin(netClient);
-    tries = 0;
-    while (!mqtt.connect(idUnico, "", "")) {
-        Serial.print(".");
-        delay(500);
-        if (WiFi.status() != WL_CONNECTED) {
-            Serial.println(" WiFi disconnected");
-            ensureWiFiConnected();
-        }
-        if (!netClient.connected()) {
-            Serial.println(" TCP disconnected, retry host");
-            return;
-        }
-        if (++tries > 60) {
-            Serial.println(" mqtt timeout");
-            return;
-        }
-        yield();
-    }
-    Serial.println(" connected!");
-    ledOff();
-
-    // Subscribe and publish heartbeat
-    subscribeTopics();
-    mqtt.publish(TOPICO_PUB_HEARTBIT, "up");
+    tryConnectMqtt();
 }
 
 void mqttUpdate() {
-    mqtt.update();
+    // No-op con AsyncMqttClient
 }
 
 static String httpGet(const char* url) {
     HTTPClient http;
+    #if defined(ESP8266)
+    WiFiClient wcli;
+    http.begin(wcli, url);
+    #else
     http.begin(url);
+    #endif
     int httpCode = http.GET();
     String payload;
     if (httpCode == 200) {
@@ -211,7 +202,12 @@ static String httpGet(const char* url) {
 
 static void updateFirmware() {
     HTTPClient http;
+    #if defined(ESP8266)
+    WiFiClient wcli;
+    http.begin(wcli, firmwareURL);
+    #else
     http.begin(firmwareURL);
+    #endif
     int httpCode = http.GET();
 
     if (httpCode == 200) {
@@ -246,7 +242,13 @@ static void updateFirmware() {
                     Serial.println("Actualizacion incompleta");
                 }
             } else {
+                #if defined(ESP8266)
+                Serial.print("Error de actualizacion: ");
+                Update.printError(Serial);
+                Serial.println();
+                #else
                 Serial.printf("Error de actualizacion: %s\n", Update.errorString());
+                #endif
             }
         } else {
             Serial.println("Archivo binario vacio");
@@ -275,3 +277,5 @@ void chequearActualizaciones() {
 
 const char* getFwVersion() { return FW_VERSION; }
 const char* getFwVersionShort() { return FW_VERSION_SHORT; }
+
+bool mqttIsConnected() { return mqttClient.connected(); }

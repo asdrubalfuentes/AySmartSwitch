@@ -14,11 +14,7 @@
 #error "Unsupported platform (ESP8266/ESP32 only)"
 #endif
 
-#include <ESPAsyncWebServer.h>
-#include <AsyncElegantOTA.h>
-#include <MQTTPubSubClient.h>
-#include <HTTPClient.h>
-#include <Update.h>
+#include <functional>
 
 // WiFi credentials (se pueden ajustar en tiempo de ejecución)
 extern String ssid;
@@ -27,8 +23,6 @@ extern String pass;
 // MQTT
 extern const char* mqttServer;
 extern const uint16_t mqttPort;
-extern WiFiClient netClient;
-extern MQTTPubSubClient mqtt;
 
 // Identidad del dispositivo y tópicos
 extern String idUnico;
@@ -47,6 +41,15 @@ extern String TOPICO_PUB_HEARTBIT;
 
 #define RELE RELAY_PIN
 
+// LED pin por defecto
+#ifndef LED_PIN
+#  if defined(ESP8266)
+#    define LED_PIN LED_BUILTIN
+#  else
+#    define LED_PIN 2
+#  endif
+#endif
+
 // Versión embebida desde el script de build
 #ifndef FW_VERSION
 #define FW_VERSION "00.00.local:0"
@@ -62,10 +65,11 @@ extern const char* firmwareURL;
 // API pública
 void initBoard();
 void beginWiFi(const String& ssid_, const String& pass_);
-void setupOTA();
+void setupOTA(); // no-op (OTA remoto únicamente)
 void connect(); // WiFi + TCP + MQTT
-void mqttUpdate();
+void mqttUpdate(); // no-op con AsyncMqttClient
 void chequearActualizaciones();
+bool mqttIsConnected();
 
 // Utilidades
 const char* getFwVersion();
