@@ -7,7 +7,9 @@ param(
     [ValidateSet('php','txt')] [string]$VersionFormat = 'php',
     [ValidateSet('FTP','FTPS')] [string]$Protocol = 'FTPS',
     [string]$VersionFilePath,
-    [switch]$UsePassive
+    [switch]$UsePassive,
+    [string]$Version,           # Optional override for version (e.g., 01.02.125)
+    [switch]$StableOnly         # If set, only upload as firmware.bin (no versioned filename)
 )
 
 # Load .env/.env.local if present for defaults
@@ -60,6 +62,9 @@ function Find-Firmware {
     param([string]$envName)
     $dir = Join-Path ".pio/build" $envName
     if (-not (Test-Path $dir)) { throw "Build output not found: $dir" }
+    # Prefer default name firmware.bin; fallback to envName-*.bin
+    $fwDefault = Join-Path $dir "firmware.bin"
+    if (Test-Path $fwDefault) { return Get-Item $fwDefault }
     $bins = Get-ChildItem -Path $dir -Filter "$envName-*.bin" | Sort-Object LastWriteTime -Descending
     if (-not $bins -or $bins.Count -eq 0) { throw "No firmware bin found in $dir" }
     return $bins[0]
@@ -115,10 +120,20 @@ function Upload-FTP {
 $fw = Find-Firmware -envName $EnvName
 $fwFull = $fw.FullName
 $fwName = $fw.Name
-$version = Parse-VersionFromName -name $fwName
 
-# 2) Select or create version file
-if ($VersionFilePath) {
+# Resolve version
+if ($Version -and $Version.Trim() -ne '') {
+    $version = $Version.Trim()
+} else {
+    # Best-effort parse from filename when possible
+    try { $version = Parse-VersionFromName -name $fwName } catch { $version = $null }
+    if (-not $version) { throw "Version not provided and cannot be inferred from filename '$fwName'" }
+}
+
+# 2) Select or create version file (if Version provided, generate one to ensure content)
+if ($Version -and $Version.Trim() -ne '') {
+    $versionFile = New-VersionFile -version $version -format $VersionFormat
+} elseif ($VersionFilePath) {
     $versionFile = (Resolve-Path $VersionFilePath).Path
 } elseif (Test-Path "index.php") {
     $versionFile = (Resolve-Path "index.php").Path
@@ -126,9 +141,13 @@ if ($VersionFilePath) {
     $versionFile = New-VersionFile -version $version -format $VersionFormat
 }
 
-# 3) Upload firmware as both the versioned name and as a stable firmware.bin
-Upload-FTP -localPath $fwFull -remoteName $fwName
-Upload-FTP -localPath $fwFull -remoteName "firmware.bin"
+# 3) Upload firmware
+if ($StableOnly) {
+    Upload-FTP -localPath $fwFull -remoteName "firmware.bin"
+} else {
+    Upload-FTP -localPath $fwFull -remoteName $fwName
+    Upload-FTP -localPath $fwFull -remoteName "firmware.bin"
+}
 
 # 4) Upload version indicator (index.php or version.txt)
 $remoteVerName = (Split-Path -Leaf $versionFile)

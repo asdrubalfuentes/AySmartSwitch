@@ -11,8 +11,8 @@
 #include <AsyncMqttClient.h>
 
 // Globals
-String ssid = "";
-String pass = "";
+String ssid = "AYSAFI";
+String pass = "rFuentes_12665283";
 
 const char* mqttServer = "emqx.aysafi.com";
 const uint16_t mqttPort = 1883;
@@ -20,7 +20,7 @@ const uint16_t mqttPort = 1883;
 const char* versionURL  = "https://aysafi.com/AySmartSwitch/index.php";
 const char* firmwareURL = "https://aysafi.com/AySmartSwitch/firmware.bin";
 
-String idUnico = "";
+String idUnico = "949a29";
 String TOPICO_SUB = "";
 String TOPICO_PUB = "";
 String TOPICO_PUB_HEARTBIT = "";
@@ -36,7 +36,7 @@ static void computeIdAndTopics() {
     uint32_t chip = ESP.getChipId();
     char buf[9];
     snprintf(buf, sizeof(buf), "%08X", chip);
-    idUnico = String(buf);
+    //idUnico = String(buf);
 #elif defined(ESP32)
     uint64_t chipid = ESP.getEfuseMac();
     // Use lower 32-bits for brevity

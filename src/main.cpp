@@ -1,8 +1,10 @@
 #include "board_def.h"
 
 void setup() {
+	delay(5000);
 	Serial.begin(115200);
 	initBoard();
+	Serial.println("Iniciando...");
 	beginWiFi(ssid, pass);
 
 	Serial.println(String("aySmartSwitch-") + idUnico + " FW " + getFwVersion());
@@ -41,3 +43,18 @@ void loop() {
 		// espacio para heartbeats u otras tareas periódicas
 	}
 }
+
+/* Blink de prueba
+#include <Arduino.h>
+void setup() {
+	Serial.begin(115200);
+	Serial.println("Hola Mundo a 115200 baudios");
+	pinMode(0, OUTPUT);
+}
+
+void loop() {
+	digitalWrite(0, LOW);
+	delay(200);
+	digitalWrite(0, HIGH);
+	delay(1000);
+}*/

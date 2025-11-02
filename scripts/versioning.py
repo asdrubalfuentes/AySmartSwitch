@@ -73,9 +73,8 @@ def before_build(target, source, env):
         f'-DFW_VERSION_SHORT="{fw_version_short}"',
     ])
 
-    # Name artifact with env and short version
-    # Example: esp01_1m-01.02.125
-    env.Replace(PROGNAME=f"${{PIOENV}}-{fw_version_short}")
+    # Mantener el nombre de artefacto por defecto (firmware.bin)
+    # Ya no renombramos el binario; solo inyectamos macros de versión.
 
 # Hook (solo cuando se ejecuta dentro de PlatformIO/SCons)
 try:
