@@ -2,7 +2,7 @@
 #include <Arduino.h>
 
 // Actualizacion por GitHub Releases (mismo modelo que nodeIO / nodeIO_master):
-//   https://github.com/<owner>/<repo>/releases/latest/download/{version.txt, firmware.sha256, firmware.sig, firmware.bin}
+//   https://github.com/<owner>/<repo>/releases/latest/download/{version.txt, firmware-<placa>.sha256, firmware-<placa>.sig, firmware-<placa>.bin}  (placa = esp32 | esp32c3)
 // Ademas del SHA-256, cada firmware viene FIRMADO (ECDSA P-256) y el equipo lo verifica con la
 // clave publica incrustada: aunque alguien interceptara la descarga, no podria instalar nada propio.
 

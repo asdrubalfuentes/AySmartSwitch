@@ -104,13 +104,13 @@ ResultadoOta actualizarSiHayNueva(const char* owner, const char* repo, const cha
   if (ESP.getFreeHeap() < 60000) { fallo(r, "memoria insuficiente para actualizar"); return r; }
 
   // 1) SHA-256 y firma esperados (se piden ANTES de bajar el binario).
-  urlAsset(owner, repo, "firmware.sha256", url, sizeof(url));
+  urlAsset(owner, repo, "firmware-" FW_TARGET ".sha256", url, sizeof(url));
   String esperado = getTexto(url);
   esperado.toLowerCase();
   if (esperado.length() != 64) { fallo(r, "sha256 no disponible"); return r; }
 
   uint8_t firma[80];
-  urlAsset(owner, repo, "firmware.sig", url, sizeof(url));
+  urlAsset(owner, repo, "firmware-" FW_TARGET ".sig", url, sizeof(url));
   size_t largoFirma = getBinarioCorto(url, firma, sizeof(firma));
   if (largoFirma < 8) { fallo(r, "firma no disponible: no se instala"); return r; }
 
@@ -118,11 +118,11 @@ ResultadoOta actualizarSiHayNueva(const char* owner, const char* repo, const cha
   mqttDesconectar();
   canalesGuardarCiclos(true);
 
-  urlAsset(owner, repo, "firmware.bin", url, sizeof(url));
+  urlAsset(owner, repo, "firmware-" FW_TARGET ".bin", url, sizeof(url));
   WiFiClientSecure sec;
   HTTPClient http;
   prepararHttp(http, sec, url);
-  if (http.GET() != HTTP_CODE_OK) { http.end(); fallo(r, "descarga de firmware.bin fallo"); return r; }
+  if (http.GET() != HTTP_CODE_OK) { http.end(); fallo(r, "descarga del firmware fallo"); return r; }
   int total = http.getSize();
   if (!Update.begin(total > 0 ? (size_t)total : UPDATE_SIZE_UNKNOWN)) { http.end(); fallo(r, "Update.begin fallo"); return r; }
 

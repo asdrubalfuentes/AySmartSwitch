@@ -109,6 +109,36 @@ void canalesCargarJson(const String& json) {
 
 int canalesCount() { return n; }
 
+static const char* nombreKind(Kind k) {
+  switch (k) {
+    case Kind::Rele: return "rele";
+    case Kind::Entrada: return "entrada";
+    case Kind::DhtTemp: return "dht_temp";
+    case Kind::DhtHum: return "dht_hum";
+    case Kind::Adc: return "adc";
+    default: return "?";
+  }
+}
+
+void canalesDescribir(Print& out) {
+  if (!n) { out.println("  (sin canales: el equipo aun no esta adherido)"); return; }
+  for (int i = 0; i < n; i++) {
+    const Canal& c = canales[i];
+    out.printf("  [%d] %-8s pin %-2u id %.8s..  ", i, nombreKind(c.kind), c.pin, c.id);
+    if (c.kind == Kind::Rele) out.printf("%s  pulso %ums  %s  ciclos %lu\n", c.activo ? "ACTIVO" : "reposo", c.pulsoMs, c.invertido ? "activo-bajo" : "activo-alto", (unsigned long)c.ciclos);
+    else if (c.kind == Kind::Entrada) out.printf("%s  nivel %d  pullup %d\n", c.activo ? "ACTIVA" : "inactiva", digitalRead(c.pin), c.pullup);
+    else if (c.tieneValor) out.printf("valor %.1f %s\n", c.valor, c.unidad);
+    else out.println("sin lectura");
+  }
+}
+
+bool canalesIdPorIndice(int i, char* out, size_t len) {
+  if (i < 0 || i >= n) return false;
+  strncpy(out, canales[i].id, len - 1);
+  out[len - 1] = 0;
+  return true;
+}
+
 void canalesIniciar(EstadoCb est, EventoCb ev) {
   cbEstado = est;
   cbEvento = ev;

@@ -53,5 +53,7 @@ void canalesLoop();
 bool canalesComando(const char* id, const char* valor, String& detalle);
 void canalesPublicarTodo();                               // reenvia el estado actual (al conectar MQTT)
 int canalesCount();
+void canalesDescribir(Print& out);                        // lista de canales (diagnostico por serie)
+bool canalesIdPorIndice(int i, char* out, size_t n);        // id del canal i (diagnostico)
 void canalesCiclosJson(JsonObject out);
 void canalesGuardarCiclos(bool forzar);

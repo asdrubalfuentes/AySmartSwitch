@@ -1,15 +1,24 @@
-# aySmartSwitch v2 (ESP32-WROOM-32)
+# aySmartSwitch v2 (ESP32-WROOM-32 y ESP32-C3 SuperMini)
 
 Firmware de los instrumentos conectados de AYSAFI: relés (portones, puertas, cargas), entradas digitales
 (contactos, PIR), temperatura/humedad (DHT11/22) y lecturas analógicas, con alarmas configurables.
 Se administra desde la app **aySmartSwitch** (`monitor-api`): el equipo no lleva ninguna configuración
 compilada; todo se la entrega el servidor al adherirse.
 
+| Placa | Entorno PlatformIO | Archivos del release |
+|---|---|---|
+| ESP32-WROOM-32 | `esp32dev` | `firmware-esp32.{bin,sha256,sig}` |
+| ESP32-C3 SuperMini | `c3mini` | `firmware-esp32c3.{bin,sha256,sig}` |
+
+**ESP32-C3 SuperMini para abrir puertas y portones:** esquema de conexión, pines, pruebas y puesta en marcha en
+[`docs/ESP32-C3-SuperMini.md`](docs/ESP32-C3-SuperMini.md). Cada equipo trae una consola de diagnóstico por el puerto
+serie (escribir `ayuda`).
+
 > La versión anterior (ESP8266/ESP32 con credenciales en el código) sigue en la rama `main`.
 
 ## Primera vez (equipo nuevo)
 
-1. Flashear por USB una sola vez: `pio run -t upload` (o `esptool` con los binarios).
+1. Flashear por USB una sola vez: `pio run -e c3mini -t upload` (C3 SuperMini) o `pio run -e esp32dev -t upload` (WROOM).
 2. En la app, el administrador crea el instrumento (con una plantilla o con sus funciones y pines)
    y pulsa **Adherir equipo**: se genera un **código `ABCD-EFGH`** (un solo uso, vence en 24 h).
 3. Encender el equipo y conectarse desde el celular a su red **`AySmartSwitch-XXXX`**
@@ -18,7 +27,7 @@ compilada; todo se la entrega el servidor al adherirse.
 4. El equipo se reinicia, se conecta, canjea el código por HTTPS y recibe sus credenciales MQTT y la
    configuración de sus canales. Desde ahí aparece **en línea** en la app.
 
-**Botón BOOT (GPIO0):** 3 s = abrir el portal · 10 s = restaurar de fábrica.
+**Botón BOOT (GPIO0 en WROOM, GPIO9 en C3):** 3 s = abrir el portal · 10 s = restaurar de fábrica.
 LED: parpadeo rápido = portal abierto · lento = sin WiFi · muy lento = sin servidor · apagado = todo bien.
 
 ## Pines (ESP32-WROOM-32)
@@ -45,8 +54,8 @@ independiente del programa principal.
 ## Actualizaciones (OTA)
 
 Cada 6 h (y desde el portal) el equipo consulta `releases/latest/download/version.txt` del repositorio;
-si hay una versión mayor descarga `firmware.bin`, verifica su **SHA-256** y su **firma ECDSA P-256**
-(`firmware.sig`) con la clave pública de `src/certs.h`, y recién entonces lo instala. Sin firma válida no se instala.
+si hay una versión mayor descarga `firmware-<placa>.bin`, verifica su **SHA-256** y su **firma ECDSA P-256**
+(`firmware-<placa>.sig`) con la clave pública de `src/certs.h`, y recién entonces lo instala. Sin firma válida no se instala.
 
 Publicar una versión: poner el tag `vX.Y.Z` sobre `main`; el workflow compila, firma y publica el release.
 Requiere el secreto de repositorio **`FW_SIGN_KEY`** (clave privada PEM; su huella debe coincidir con la de `src/certs.h`).

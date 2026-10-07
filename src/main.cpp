@@ -9,8 +9,9 @@
 #include "canales.h"
 #include "enlace_mqtt.h"
 #include "actualizacion.h"
+#include "diag.h"
 
-// aySmartSwitch v2 (ESP32-WROOM-32). Ciclo de vida:
+// aySmartSwitch v2 (ESP32-WROOM-32 y ESP32-C3 SuperMini). Ciclo de vida:
 //   1. Sin WiFi guardado -> portal cautivo (red AySmartSwitch-XXXX) para elegir WiFi y escribir el
 //      codigo de adhesion que genera el administrador en la app.
 //   2. Con WiFi y sin adherir -> canjea el codigo por HTTPS y recibe credenciales MQTT y canales.
@@ -25,6 +26,11 @@ static uint32_t ultimaOta = 0;
 static bool otaInicialHecha = false;
 static uint32_t inicioSinWifi = 0;
 static uint32_t btnDesde = 0;
+
+// El LED del ESP32-C3 SuperMini enciende con nivel bajo; el del WROOM, con nivel alto.
+static inline void ledEscribir(bool encendido) {
+  digitalWrite(LED_PIN, (encendido != (LED_ACTIVO_BAJO != 0)) ? HIGH : LOW);
+}
 
 static void aplicarCanales() {
   canalesCargarJson(storeLoadCanales());
@@ -49,7 +55,7 @@ static void ledLoop() {
   if (portalActivo()) periodo = 250;
   else if (!netConectado() && cfg.ssid[0]) periodo = 1000;
   else if (cfg.enrolled && !mqttConectado()) periodo = 2000;
-  digitalWrite(LED_PIN, periodo ? ((millis() / periodo) & 1) : LOW);
+  ledEscribir(periodo ? ((millis() / periodo) & 1) : 0);
 }
 
 static void adherir() {
@@ -133,11 +139,16 @@ static void ota(bool forzada) {
 
 void setup() {
   Serial.begin(115200);
+#if defined(AYS_TARGET_ESP32C3)
+  // USB nativo: el puerto aparece al arrancar; se espera un momento a que el PC lo abra para no perder el inicio del registro.
+  for (uint32_t t = millis(); !Serial && millis() - t < 2000;) delay(10);
+#endif
   delay(100);
   pinMode(LED_PIN, OUTPUT);
+  ledEscribir(false);
   pinMode(BTN_PIN, INPUT_PULLUP);
   storeInit();
-  Serial.printf("\n[aySmartSwitch] fw %s  equipo %s  %s\n", FW_VERSION, deviceId, cfg.enrolled ? "adherido" : "sin adherir");
+  Serial.printf("\n[aySmartSwitch] fw %s  %s  equipo %s  %s\n", FW_VERSION, MODEL_NAME, deviceId, cfg.enrolled ? "adherido" : "sin adherir");
 
   esp_task_wdt_init(60, true);
   esp_task_wdt_add(NULL);
@@ -159,6 +170,7 @@ void loop() {
   botonLoop();
   canalesLoop();
   ledLoop();
+  diagLoop();
   netLoop();
 
   bool conectado = netConectado();

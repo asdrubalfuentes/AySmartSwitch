@@ -1,8 +1,9 @@
 # Compila, FIRMA y publica el firmware como GitHub Release "latest".
 #
 # Disparador: un tag vX.Y.Z sobre main (release aprobado por el mantenedor).
-# Publica firmware.bin + version.txt + firmware.sha256 + firmware.sig, que los equipos consultan en
-#   https://github.com/<owner>/<repo>/releases/latest/download/
+# Publica, por cada placa (esp32 = ESP32-WROOM-32, esp32c3 = ESP32-C3 SuperMini):
+#   firmware-<placa>.bin + .sha256 + .sig        y un version.txt comun,
+# que los equipos consultan en https://github.com/<owner>/<repo>/releases/latest/download/
 # El equipo solo instala el firmware si su firma (ECDSA P-256) valida con la clave publica
 # incrustada en src/certs.h. La clave PRIVADA va en el secreto FW_SIGN_KEY del repositorio.
 
@@ -15,9 +16,6 @@ on:
 
 permissions:
   contents: write
-
-env:
-  PIO_ENV: esp32dev
 
 jobs:
   build-and-release:
@@ -47,17 +45,20 @@ jobs:
       - name: Instalar PlatformIO
         run: pip install --upgrade platformio
 
-      - name: Compilar firmware
+      - name: Compilar firmware (todas las placas)
         env:
           EXTRA_BUILD_FLAGS: -D FW_VERSION_OVERRIDE=\"${{ steps.version.outputs.version }}\"
-        run: pio run -e "${{ env.PIO_ENV }}"
+        run: pio run -e esp32dev -e c3mini
 
       - name: Preparar assets
         run: |
           mkdir -p dist
-          cp ".pio/build/${{ env.PIO_ENV }}/firmware.bin" dist/firmware.bin
+          cp .pio/build/esp32dev/firmware.bin dist/firmware-esp32.bin
+          cp .pio/build/c3mini/firmware.bin dist/firmware-esp32c3.bin
           printf '%s' "${{ steps.version.outputs.version }}" > dist/version.txt
-          sha256sum dist/firmware.bin | cut -d' ' -f1 | tr -d '\n' > dist/firmware.sha256
+          for b in dist/firmware-*.bin; do
+            sha256sum "$b" | cut -d' ' -f1 | tr -d '\n' > "${b%.bin}.sha256"
+          done
 
       - name: Firmar firmware
         env:
@@ -70,11 +71,13 @@ jobs:
           HUELLA=$(openssl ec -in "$RUNNER_TEMP/fw_sign.pem" -pubout -outform DER 2>/dev/null | openssl dgst -sha256 | awk '{print $2}')
           ESPERADA=$(grep -o 'DER): [0-9a-f]*' src/certs.h | awk '{print $2}')
           if [ "$HUELLA" != "$ESPERADA" ]; then echo "::error::FW_SIGN_KEY no corresponde a la clave publica de src/certs.h"; exit 1; fi
-          openssl dgst -sha256 -sign "$RUNNER_TEMP/fw_sign.pem" -out dist/firmware.sig dist/firmware.bin
           openssl ec -in "$RUNNER_TEMP/fw_sign.pem" -pubout -out "$RUNNER_TEMP/fw_pub.pem" 2>/dev/null
-          openssl dgst -sha256 -verify "$RUNNER_TEMP/fw_pub.pem" -signature dist/firmware.sig dist/firmware.bin
+          for b in dist/firmware-*.bin; do
+            openssl dgst -sha256 -sign "$RUNNER_TEMP/fw_sign.pem" -out "${b%.bin}.sig" "$b"
+            openssl dgst -sha256 -verify "$RUNNER_TEMP/fw_pub.pem" -signature "${b%.bin}.sig" "$b"
+            echo "$b  SHA256: $(cat ${b%.bin}.sha256)"
+          done
           rm -f "$RUNNER_TEMP/fw_sign.pem"
-          echo "Version: ${{ steps.version.outputs.version }}  SHA256: $(cat dist/firmware.sha256)"
 
       - name: Publicar GitHub Release (latest)
         uses: softprops/action-gh-release@v2
@@ -83,7 +86,10 @@ jobs:
           tag_name: ${{ github.ref_name }}
           make_latest: true
           files: |
-            dist/firmware.bin
             dist/version.txt
-            dist/firmware.sha256
-            dist/firmware.sig
+            dist/firmware-esp32.bin
+            dist/firmware-esp32.sha256
+            dist/firmware-esp32.sig
+            dist/firmware-esp32c3.bin
+            dist/firmware-esp32c3.sha256
+            dist/firmware-esp32c3.sig
