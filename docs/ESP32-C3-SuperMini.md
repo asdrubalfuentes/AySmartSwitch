@@ -98,3 +98,17 @@ Abre el monitor serie (`pio device monitor -b 115200`) y escribe `ayuda`:
 | No aparece el puerto COM | cable solo de carga, o modo descarga (BOOT al conectar) |
 | LED parpadeo rápido | portal abierto · lento: sin WiFi · muy lento: sin servidor |
 | "Este equipo es un …, pero el instrumento está configurado para …" | la placa elegida en la app no es la que estás adhiriendo |
+
+## Confirmación de cada comando (efectividad de la red)
+
+Cada comando que sale de la app queda registrado con su identificador y recorre este camino:
+
+1. el servidor lo publica y anota la hora de salida;
+2. el equipo lo recibe, **lee de vuelta el pin del relé** para comprobar que el chip lo llevó al nivel pedido (detecta un
+   pin en corto o dañado; no prueba que los contactos del relé se hayan cerrado: para eso sirve el sensor del portón) y responde;
+3. al terminar el pulso vuelve a leer el pin y confirma que regresó al reposo;
+4. el servidor mide la **ida y vuelta** (salida → respuesta) y marca el comando como *confirmado*, *sin respuesta* (15 s),
+   *rechazado*, *expirado* o *fallo del pin*.
+
+En la app, **Métricas** del instrumento muestra la tasa de comandos confirmados, el tiempo de ida y vuelta (mediana, promedio,
+p95 y máximo), los fallos de pin y los últimos comandos. Por serie, `rele 0 pulso` y `salida 4 500` muestran la lectura real del pin.

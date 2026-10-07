@@ -42,15 +42,22 @@ struct Canal {
   uint32_t ultimaPub;
   float ultimoPub;
   uint32_t ciclos;      // activaciones acumuladas (desgaste)
+  // ---- confirmacion por lectura del pin (checkback) ----
+  char ordenId[12];     // id del ultimo comando recibido (para atar la confirmacion del fin del pulso)
+  bool rbUlt;           // el pin tomo el nivel esperado al accionarlo
+  volatile bool rbFinOk;   // al terminar el pulso, el pin volvio al reposo
 };
 
 typedef void (*EstadoCb)(const Canal& c, const char* valor);
+typedef void (*FinPulsoCb)(const Canal& c, bool pinEnReposo);   // el pulso termino: informa si el pin volvio al reposo
+void canalesFinPulsoCb(FinPulsoCb cb);
 typedef void (*EventoCb)(const Canal& c, const char* evt, const Alarma& a, float valor);
 
 void canalesCargarJson(const String& json);               // reemplaza la lista (configuracion del servidor)
 void canalesIniciar(EstadoCb est, EventoCb ev);           // pines en estado seguro y listo para leer
 void canalesLoop();
-bool canalesComando(const char* id, const char* valor, String& detalle);
+// rb (opcional) devuelve si, al accionar, la lectura del pin confirmo el nivel esperado.
+bool canalesComando(const char* id, const char* valor, String& detalle, bool* rb = nullptr, const char* ordenId = nullptr);
 void canalesPublicarTodo();                               // reenvia el estado actual (al conectar MQTT)
 int canalesCount();
 void canalesDescribir(Print& out);                        // lista de canales (diagnostico por serie)

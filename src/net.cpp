@@ -9,9 +9,31 @@ uint32_t wifiReconexiones = 0;
 static bool yaConectoAlgunaVez = false;
 static uint32_t ultimoIntento = 0;
 
-static void onWifiEvent(WiFiEvent_t ev) {
+static void onWifiEvent(WiFiEvent_t ev, WiFiEventInfo_t info) {
   if (ev == ARDUINO_EVENT_WIFI_STA_DISCONNECTED && yaConectoAlgunaVez) wifiReconexiones++;
   if (ev == ARDUINO_EVENT_WIFI_STA_GOT_IP) yaConectoAlgunaVez = true;
+  // Registro de lo que pasa con el portal y el WiFi: sirve para saber por que se corta una conexion.
+  if (ev == ARDUINO_EVENT_WIFI_AP_STACONNECTED) {
+    const uint8_t* m = info.wifi_ap_staconnected.mac;
+    Serial.printf("[wifi] celular conectado al portal %02x:%02x:%02x:%02x:%02x:%02x\n", m[0], m[1], m[2], m[3], m[4], m[5]);
+  }
+  if (ev == ARDUINO_EVENT_WIFI_AP_STADISCONNECTED) {
+    const uint8_t* m = info.wifi_ap_stadisconnected.mac;
+    Serial.printf("[wifi] celular desconectado del portal %02x:%02x:%02x:%02x:%02x:%02x\n", m[0], m[1], m[2], m[3], m[4], m[5]);
+  }
+  if (ev == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+    Serial.printf("[wifi] desconectado de la red (motivo %d)\n", info.wifi_sta_disconnected.reason);
+  }
+  if (ev == ARDUINO_EVENT_WIFI_STA_GOT_IP) Serial.println("[wifi] conectado y con IP");
+}
+
+// El ESP32-C3 SuperMini trae una antena de PCB muy pequena y regulador justo: a potencia maxima el WiFi se
+// vuelve inestable (la red desaparece o no logra conectar). Bajar la potencia es la correccion conocida.
+void netAjustarRadio() {
+  WiFi.setSleep(false);   // sin ahorro de energia: la red del portal no "duerme"
+#if defined(AYS_TARGET_ESP32C3)
+  WiFi.setTxPower(WIFI_POWER_11dBm);
+#endif
 }
 
 void netIniciar() {
@@ -26,6 +48,7 @@ bool netConectar(uint32_t timeoutMs) {
   if (!cfg.ssid[0]) return false;
   if (WiFi.getMode() == WIFI_OFF) WiFi.mode(WIFI_STA);
   WiFi.begin(cfg.ssid, cfg.pass);
+  netAjustarRadio();
   uint32_t ini = millis();
   while (WiFi.status() != WL_CONNECTED && (millis() - ini) < timeoutMs) {
     delay(250);

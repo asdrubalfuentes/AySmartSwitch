@@ -4,6 +4,7 @@
 extern uint32_t wifiReconexiones;
 
 void netIniciar();
+void netAjustarRadio();              // potencia y ahorro de energia del radio segun la placa
 bool netConectado();
 // Intenta conectar al WiFi guardado. Bloquea hasta lograrlo o agotar el tiempo.
 bool netConectar(uint32_t timeoutMs);

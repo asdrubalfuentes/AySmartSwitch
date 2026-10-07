@@ -2,11 +2,15 @@
 #include "store.h"
 #include <DHT.h>
 #include <esp_timer.h>
+#include <driver/gpio.h>
 
 static Canal canales[MAX_CANALES];
 static int n = 0;
 static EstadoCb cbEstado = nullptr;
 static EventoCb cbEvento = nullptr;
+static FinPulsoCb cbFin = nullptr;
+
+void canalesFinPulsoCb(FinPulsoCb cb) { cbFin = cb; }
 
 // Un mismo sensor DHT entrega temperatura y humedad por el mismo pin.
 struct DhtSlot {
@@ -148,8 +152,12 @@ void canalesIniciar(EstadoCb est, EventoCb ev) {
       // Estado seguro primero: el rele nunca queda activo por un reinicio.
       digitalWrite(c.pin, nivelReposo(c));
       pinMode(c.pin, OUTPUT);
+      // Salida CON lectura habilitada: hace falta para poder confirmar el nivel real del pin (checkback).
+      gpio_set_direction((gpio_num_t)c.pin, GPIO_MODE_INPUT_OUTPUT);
       digitalWrite(c.pin, nivelReposo(c));
       c.activo = false;
+      c.rbUlt = true;
+      c.rbFinOk = true;
     } else if (c.kind == Kind::Entrada) {
       pinMode(c.pin, c.pullup ? INPUT_PULLUP : INPUT);
     } else if (c.kind == Kind::Adc) {
@@ -190,6 +198,7 @@ static void evaluarAlarmas(Canal& c, float v, bool digitalActivo) {
 static void finDePulso(void* arg) {
   Canal* c = (Canal*)arg;
   digitalWrite(c->pin, nivelReposo(*c));
+  c->rbFinOk = (digitalRead(c->pin) == nivelReposo(*c));   // lectura real del pin: volvio al reposo
   c->activo = false;
   c->finPulso = true;
 }
@@ -212,26 +221,33 @@ static void iniciarPulso(Canal& c) {
 
 static void releSet(Canal& c, bool on) {
   if (on == c.activo) return;
-  digitalWrite(c.pin, on ? nivelActivo(c) : nivelReposo(c));
+  uint8_t nivel = on ? nivelActivo(c) : nivelReposo(c);
+  digitalWrite(c.pin, nivel);
+  // Checkback: se lee el pin de vuelta para confirmar que el chip realmente lo llevo al nivel pedido
+  // (detecta un pin en corto o dañado; no prueba que los contactos del rele se hayan cerrado).
+  c.rbUlt = (digitalRead(c.pin) == nivel);
   c.activo = on;
   if (on) { c.ciclos++; cicloSucio++; }
   if (cbEstado) cbEstado(c, on ? "on" : "off");
 }
 
-bool canalesComando(const char* id, const char* valor, String& detalle) {
+bool canalesComando(const char* id, const char* valor, String& detalle, bool* rb, const char* ordenId) {
   for (int i = 0; i < n; i++) {
     Canal& c = canales[i];
     if (strcmp(c.id, id)) continue;
     if (c.kind != Kind::Rele) { detalle = "el canal no recibe comandos"; return false; }
+    strncpy(c.ordenId, ordenId ? ordenId : "", sizeof(c.ordenId) - 1);
+    c.ordenId[sizeof(c.ordenId) - 1] = 0;
     if (!strcmp(valor, "pulso")) {
       if (c.pulsoMs == 0) { detalle = "canal sin pulso configurado (usa on/off)"; return false; }
       detenerTemporizador(c);
       releSet(c, true);
       iniciarPulso(c);
+      if (rb) *rb = c.rbUlt;
       return true;
     }
-    if (!strcmp(valor, "on"))  { detenerTemporizador(c); releSet(c, true); return true; }
-    if (!strcmp(valor, "off")) { detenerTemporizador(c); releSet(c, false); return true; }
+    if (!strcmp(valor, "on"))  { detenerTemporizador(c); releSet(c, true); if (rb) *rb = c.rbUlt; return true; }
+    if (!strcmp(valor, "off")) { detenerTemporizador(c); releSet(c, false); if (rb) *rb = c.rbUlt; return true; }
     detalle = "valor no soportado";
     return false;
   }
@@ -327,7 +343,11 @@ void canalesLoop() {
   for (int i = 0; i < n; i++) {
     Canal& c = canales[i];
     if (c.kind == Kind::Rele) {
-      if (c.finPulso) { c.finPulso = false; if (cbEstado) cbEstado(c, "off"); }
+      if (c.finPulso) {
+        c.finPulso = false;
+        if (cbEstado) cbEstado(c, "off");
+        if (cbFin && c.ordenId[0]) cbFin(c, c.rbFinOk);
+      }
     } else if (c.kind == Kind::Entrada) {
       loopEntrada(c);
     }

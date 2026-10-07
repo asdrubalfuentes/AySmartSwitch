@@ -8,6 +8,7 @@
 #include <WiFi.h>
 #include <esp_system.h>
 #include <esp_task_wdt.h>
+#include <driver/gpio.h>
 
 namespace {
 
@@ -82,8 +83,9 @@ void rele(String resto) {
   char id[40];
   if (!canalesIdPorIndice(a.toInt(), id, sizeof(id))) { Serial.println("no existe ese canal (mira la lista con 'canales')"); return; }
   String detalle;
-  bool ok = canalesComando(id, v.c_str(), detalle);
-  Serial.printf("[rele %d] %s %s%s%s\n", (int)a.toInt(), v.c_str(), ok ? "OK" : "RECHAZADO", detalle.length() ? ": " : "", detalle.c_str());
+  bool rb = false;
+  bool ok = canalesComando(id, v.c_str(), detalle, &rb, "diag");
+  Serial.printf("[rele %d] %s %s%s%s  | lectura del pin: %s\n", (int)a.toInt(), v.c_str(), ok ? "OK" : "RECHAZADO", detalle.length() ? ": " : "", detalle.c_str(), rb ? "confirmada" : "NO coincide");
 }
 
 void salida(String resto) {
@@ -91,19 +93,18 @@ void salida(String resto) {
   String m = palabra(resto);
   int pin = a.toInt();
   if (!a.length() || !pinDePrueba(pin)) { Serial.println("pin no permitido para pruebas (son los mismos pines que la app deja asignar a un rele)"); return; }
-  for (int i = 0; i < canalesCount(); i++) {
-    // Un pin ya usado por un canal se prueba con "rele", para no pisar su logica.
-    (void)i;
-  }
   uint32_t ms = m.length() ? (uint32_t)m.toInt() : 500;
   if (ms < 20) ms = 20;
   if (ms > 5000) ms = 5000;
   pinMode(pin, OUTPUT);
+  gpio_set_direction((gpio_num_t)pin, GPIO_MODE_INPUT_OUTPUT);   // con lectura habilitada
   digitalWrite(pin, HIGH);
-  Serial.printf("[salida] pin %d en ALTO por %lu ms...\n", pin, (unsigned long)ms);
+  int leidoAlto = digitalRead(pin);
+  Serial.printf("[salida] pin %d en ALTO por %lu ms... lectura real del pin: %d %s\n", pin, (unsigned long)ms, leidoAlto, leidoAlto == 1 ? "(confirmado)" : "(NO coincide: pin en corto o dañado)");
   delay(ms);
   digitalWrite(pin, LOW);
-  Serial.printf("[salida] pin %d en BAJO (listo)\n", pin);
+  int leidoBajo = digitalRead(pin);
+  Serial.printf("[salida] pin %d en BAJO (listo). lectura real: %d %s\n", pin, leidoBajo, leidoBajo == 0 ? "(confirmado)" : "(NO coincide)");
 }
 
 void leerPin(String resto) {

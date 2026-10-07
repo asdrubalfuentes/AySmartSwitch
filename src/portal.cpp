@@ -6,6 +6,7 @@
 #include <WebServer.h>
 #include <DNSServer.h>
 #include <ArduinoJson.h>
+#include <vector>
 
 static WebServer web(80);
 static DNSServer dns;
@@ -18,6 +19,26 @@ static uint32_t reiniciarEn = 0;
 static String mensaje;
 
 void portalMensaje(const String& texto) { mensaje = texto; }
+
+// Redes WiFi vistas al abrir el portal (las ofrece la pagina para elegir).
+static std::vector<String> redesCache;
+
+static void buscarRedes() {
+  Serial.println("[portal] buscando redes WiFi...");
+  if (WiFi.getMode() == WIFI_AP || WiFi.getMode() == WIFI_AP_STA) WiFi.mode(WIFI_AP_STA);   // el escaneo exige la parte STA
+  else WiFi.mode(WIFI_STA);
+  int n = WiFi.scanNetworks(false);
+  redesCache.clear();
+  for (int i = 0; i < n && redesCache.size() < 20; i++) {
+    String s = WiFi.SSID(i);
+    if (!s.length()) continue;
+    bool repetida = false;
+    for (const String& e : redesCache) if (e == s) { repetida = true; break; }
+    if (!repetida) redesCache.push_back(s);
+  }
+  WiFi.scanDelete();
+  Serial.printf("[portal] %u redes encontradas\n", (unsigned)redesCache.size());
+}
 
 String portalSsid() { return String("AySmartSwitch-") + String(deviceId + 8); }   // ultimos 4 hex
 String portalClave() { return String(deviceId + 4); }                              // ultimos 8 hex
@@ -71,6 +92,7 @@ static String paginaInicio() {
 }
 
 static void redirigir() {
+  Serial.printf("[portal] %s%s -> redirige a la pagina de configuracion\n", web.hostHeader().c_str(), web.uri().c_str());
   web.sendHeader("Location", "http://192.168.4.1/", true);
   web.send(302, "text/plain", "");
 }
@@ -108,24 +130,25 @@ void portalIniciar(bool porFallaWifi) {
   if (activo) return;
   porFalla = porFallaWifi;
   inicio = millis();
+  // Las redes se buscan ANTES de abrir el portal: escanear con el portal abierto obliga al radio a
+  // saltar de canal y la red del equipo "desaparece" unos segundos justo cuando el celular carga la pagina.
+  buscarRedes();
   // AP + STA: el equipo sigue intentando su WiFi mientras el portal esta abierto.
   WiFi.mode(cfg.ssid[0] ? WIFI_AP_STA : WIFI_AP);
-  WiFi.softAP(portalSsid().c_str(), portalClave().c_str());
+  // Canal 6 (el 1 suele estar saturado), maximo 4 celulares conectados.
+  WiFi.softAP(portalSsid().c_str(), portalClave().c_str(), 6, 0, 4);
+  netAjustarRadio();
   dns.setErrorReplyCode(DNSReplyCode::NoError);
   dns.start(53, "*", WiFi.softAPIP());
 
-  web.on("/", HTTP_GET, []() { web.send(200, "text/html; charset=utf-8", paginaInicio()); });
+  web.on("/", HTTP_GET, []() { Serial.println("[portal] pagina principal pedida"); web.send(200, "text/html; charset=utf-8", paginaInicio()); });
   web.on("/scan", HTTP_GET, []() {
-    int n = WiFi.scanComplete();
+    // Por defecto entrega la lista ya buscada. "?nuevo=1" vuelve a buscar (el portal se corta unos segundos).
+    if (web.hasArg("nuevo")) buscarRedes();
     JsonDocument d;
+    d["cargando"] = false;
     JsonArray redes = d["redes"].to<JsonArray>();
-    if (n == WIFI_SCAN_FAILED) { WiFi.scanNetworks(true); d["cargando"] = true; }
-    else if (n == WIFI_SCAN_RUNNING) { d["cargando"] = true; }
-    else {
-      d["cargando"] = false;
-      for (int i = 0; i < n && i < 20; i++) { String s = WiFi.SSID(i); if (s.length()) redes.add(s); }
-      WiFi.scanDelete();
-    }
+    for (const String& s : redesCache) redes.add(s);
     String s;
     serializeJson(d, s);
     web.send(200, "application/json", s);

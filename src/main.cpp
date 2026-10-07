@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_task_wdt.h>
+#include <esp_system.h>
 #include "config.h"
 #include "store.h"
 #include "net.h"
@@ -93,10 +94,17 @@ static void refrescarConfig() {
   ultimoRefresco = millis();
 
   String antes = cfg.cfgv;
+  String brokerAntes = String(cfg.mqttHost) + ":" + cfg.mqttPort + (cfg.mqttTls ? "/tls" : "");
   String error;
   switch (servidorRefrescarConfig(error)) {
     case RespuestaServidor::Ok:
       configAlDia = true;
+      // Si el servidor cambia el broker del equipo (p. ej. pasa al puerto seguro 8883 con TLS), se reconecta
+      // solo, sin tener que volver a adherirlo.
+      if (brokerAntes != String(cfg.mqttHost) + ":" + cfg.mqttPort + (cfg.mqttTls ? "/tls" : "")) {
+        Serial.printf("[cfg] el servidor indica otro broker MQTT: %s:%u%s\n", cfg.mqttHost, cfg.mqttPort, cfg.mqttTls ? " (TLS)" : "");
+        mqttReiniciar();
+      }
       if (antes != cfg.cfgv) {
         Serial.printf("[cfg] configuracion nueva (%s)\n", cfg.cfgv);
         aplicarCanales();
@@ -149,6 +157,8 @@ void setup() {
   pinMode(BTN_PIN, INPUT_PULLUP);
   storeInit();
   Serial.printf("\n[aySmartSwitch] fw %s  %s  equipo %s  %s\n", FW_VERSION, MODEL_NAME, deviceId, cfg.enrolled ? "adherido" : "sin adherir");
+  // Por que se reinicio el equipo (1 encendido, 3 software, 4 excepcion, 5-7 watchdog, 9 caida de tension, 15 USB).
+  Serial.printf("[arranque] motivo del reinicio: %d\n", (int)esp_reset_reason());
 
   esp_task_wdt_init(60, true);
   esp_task_wdt_add(NULL);

@@ -45,7 +45,9 @@ static const char* razonReinicio() {
 }
 
 static void publicar(const String& t, const String& payload, bool retenido = false) {
-  if (mqtt.connected()) mqtt.publish(t.c_str(), payload.c_str(), retenido);
+  if (!mqtt.connected()) { Serial.printf("[mqtt] no publica %s: sin conexion\n", t.c_str()); return; }
+  bool ok = mqtt.publish(t.c_str(), payload.c_str(), retenido);
+  Serial.printf("[mqtt] publica %s (%u bytes) -> %s\n", t.c_str() + strlen(cfg.base), (unsigned)payload.length(), ok ? "ok" : "FALLO");
 }
 
 static void publicarStatus() {
@@ -98,20 +100,36 @@ void mqttPublicarEvento(const Canal& c, const char* evt, const Alarma& a, float 
   publicar(temaCanal(c.id, "evt"), s);
 }
 
-static void ack(const char* canalId, const char* idOrden, bool ok, const String& detalle) {
+// Confirmacion del comando. `rb` = lectura real del pin al accionar (-1: no aplica); `us` = microsegundos desde que
+// llego el comando hasta que el pin quedo verificado. El servidor suma el viaje de ida y vuelta por la red.
+static void ack(const char* canalId, const char* idOrden, bool ok, const String& detalle, int rb = -1, uint32_t us = 0) {
   JsonDocument d;
   d["id"] = idOrden;
   d["ok"] = ok;
   if (detalle.length()) d["detail"] = detalle;
+  if (rb >= 0) { d["rb"] = rb == 1; d["us"] = us; }
   String s;
   serializeJson(d, s);
   publicar(temaCanal(canalId, "ack"), s);
 }
 
+// Segunda confirmacion de un pulso: ya termino y el pin volvio a su nivel de reposo.
+static void alFinDePulso(const Canal& c, bool pinEnReposo) {
+  JsonDocument d;
+  d["id"] = c.ordenId;
+  d["fase"] = "fin";
+  d["rb"] = pinEnReposo;
+  String s;
+  serializeJson(d, s);
+  publicar(temaCanal(c.id, "ack"), s);
+}
+
 // Un comando que llega tarde NO se ejecuta (un porton no puede abrirse "despues").
 static void alRecibir(char* topic, byte* payload, unsigned int len) {
+  uint32_t t0 = micros();
   String t(topic);
   String base = String(cfg.base) + "/";
+  Serial.printf("[mqtt] recibido %s (%u bytes)\n", topic, len);
   if (!t.startsWith(base)) return;
   String resto = t.substring(base.length());
 
@@ -130,13 +148,17 @@ static void alRecibir(char* topic, byte* payload, unsigned int len) {
     uint64_t exp = d["exp"] | 0ULL;
     if (horaOk() && exp && ahoraMs() > exp) { ack(id.c_str(), idOrden, false, "expirado"); return; }
     String detalle;
-    bool ok = canalesComando(id.c_str(), valor, detalle);
-    ack(id.c_str(), idOrden, ok, detalle);
+    bool rb = false;
+    bool ok = canalesComando(id.c_str(), valor, detalle, &rb, idOrden);
+    // Un comando "ok" cuyo pin no tomo el nivel pedido se informa como fallo de hardware.
+    if (ok && !rb) { ok = false; detalle = "el pin no tomo el nivel esperado"; }
+    ack(id.c_str(), idOrden, ok, detalle, ok || detalle.startsWith("el pin") ? (rb ? 1 : 0) : -1, micros() - t0);
   }
 }
 
 void mqttIniciar() {
   if (preparado) return;
+  canalesFinPulsoCb(alFinDePulso);
   if (cfg.mqttTls) {
     seguro.setCACert(ISRG_ROOT_X1);
     mqtt.setClient(seguro);
@@ -159,9 +181,17 @@ static bool conectar() {
   String clientId = String("ays-") + deviceId;
   String lwt = "{\"online\":false}";
   String temaStatus = tema("status");
+  Serial.printf("[mqtt] conectando a %s:%u (%s)...\n", cfg.mqttHost, cfg.mqttPort, cfg.mqttTls ? "TLS" : "sin TLS");
   bool ok = mqtt.connect(clientId.c_str(), cfg.mqttUser[0] ? cfg.mqttUser : nullptr, cfg.mqttUser[0] ? cfg.mqttPass : nullptr,
                          temaStatus.c_str(), 0, true, lwt.c_str());
-  if (!ok) return false;
+  if (!ok) {
+    // Codigos de PubSubClient: -4 tiempo agotado, -3 conexion perdida, -2 no se pudo conectar, 4/5 usuario o clave no aceptados.
+    Serial.printf("[mqtt] no se pudo conectar (estado %d)\n", mqtt.state());
+    return false;
+  }
+  IPAddress ipServidor;
+  WiFi.hostByName(cfg.mqttHost, ipServidor);
+  Serial.printf("[mqtt] conectado (%s resuelve a %s; DNS %s)\n", cfg.mqttHost, ipServidor.toString().c_str(), WiFi.dnsIP().toString().c_str());
   mqtt.subscribe(tema("cfg").c_str());
   mqtt.subscribe((String(cfg.base) + "/ch/+/cmd").c_str());
   publicarStatus();
