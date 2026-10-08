@@ -50,8 +50,12 @@ static void botonLoop() {
   }
 }
 
-// ---- LED: portal = parpadeo rapido; sin WiFi = lento; todo en orden = apagado ----
+// ---- LED: rele accionado = encendido hasta que se confirma; falla del pin = parpadeo muy rapido;
+//      portal = parpadeo rapido; sin WiFi = lento; todo en orden = apagado ----
 static void ledLoop() {
+  uint8_t rele = canalesLedModo();
+  if (rele == 1) { ledEscribir(true); return; }
+  if (rele == 2) { ledEscribir((millis() / 100) & 1); return; }
   uint32_t periodo = 0;
   if (portalActivo()) periodo = 250;
   else if (!netConectado() && cfg.ssid[0]) periodo = 1000;

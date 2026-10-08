@@ -62,5 +62,8 @@ void canalesPublicarTodo();                               // reenvia el estado a
 int canalesCount();
 void canalesDescribir(Print& out);                        // lista de canales (diagnostico por serie)
 bool canalesIdPorIndice(int i, char* out, size_t n);        // id del canal i (diagnostico)
+// Estado del LED integrado respecto a los reles: 0 = nada que mostrar, 1 = rele accionado y sin confirmar
+// (encendido), 2 = la lectura del pin no coincidio con lo pedido (falla de hardware).
+uint8_t canalesLedModo();
 void canalesCiclosJson(JsonObject out);
 void canalesGuardarCiclos(bool forzar);

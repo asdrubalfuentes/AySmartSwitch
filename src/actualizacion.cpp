@@ -72,6 +72,13 @@ bool firmaValida(const uint8_t digest[32], const uint8_t* firma, size_t largo) {
   return rc == 0;
 }
 
+bool ledOtaEncendido = false;
+void ledOta(bool encendido) {
+  ledOtaEncendido = encendido;
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, (encendido != (LED_ACTIVO_BAJO != 0)) ? HIGH : LOW);
+}
+
 void fallo(ResultadoOta& r, const char* msg) {
   snprintf(r.error, sizeof(r.error), "%s", msg);
   r.ok = false;
@@ -134,6 +141,7 @@ ResultadoOta actualizarSiHayNueva(const char* owner, const char* repo, const cha
   uint8_t buf[1024];
   size_t escritos = 0;
   uint32_t ultimoDato = millis();
+  uint32_t ultimoLed = 0;
   bool error = false;
   while (true) {
     size_t disp = flujo->available();
@@ -144,6 +152,8 @@ ResultadoOta actualizarSiHayNueva(const char* owner, const char* repo, const cha
       escritos += n;
       ultimoDato = millis();
       esp_task_wdt_reset();
+      // LED integrado: parpadeo muy rapido mientras se descarga el firmware.
+      if (millis() - ultimoLed >= 80) { ultimoLed = millis(); ledOta(!ledOtaEncendido); }
       if (total > 0 && escritos >= (size_t)total) break;
     } else {
       if (!flujo->connected()) break;
@@ -153,6 +163,7 @@ ResultadoOta actualizarSiHayNueva(const char* owner, const char* repo, const cha
   }
   http.end();
 
+  ledOta(true);   // descarga terminada: encendido fijo mientras se verifica
   uint8_t digest[32];
   mbedtls_sha256_finish(&sha, digest);
   mbedtls_sha256_free(&sha);
@@ -165,7 +176,9 @@ ResultadoOta actualizarSiHayNueva(const char* owner, const char* repo, const cha
 
   if (!Update.end(true) || !Update.isFinished()) { fallo(r, "Update.end fallo"); return r; }
   Serial.println("[ota] firmware verificado e instalado; reiniciando");
-  delay(400);
+  // Instalado: 3 destellos lentos y reinicia.
+  for (int i = 0; i < 3; i++) { ledOta(true); delay(250); ledOta(false); delay(250); }
+  delay(100);
   ESP.restart();
   return r;
 }

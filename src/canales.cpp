@@ -238,6 +238,7 @@ bool canalesComando(const char* id, const char* valor, String& detalle, bool* rb
     if (c.kind != Kind::Rele) { detalle = "el canal no recibe comandos"; return false; }
     strncpy(c.ordenId, ordenId ? ordenId : "", sizeof(c.ordenId) - 1);
     c.ordenId[sizeof(c.ordenId) - 1] = 0;
+    c.rbFinOk = true;
     if (!strcmp(valor, "pulso")) {
       if (c.pulsoMs == 0) { detalle = "canal sin pulso configurado (usa on/off)"; return false; }
       detenerTemporizador(c);
@@ -358,6 +359,20 @@ void canalesLoop() {
   }
   loopDht();
   canalesGuardarCiclos(false);
+}
+
+// El LED replica al rele: encendido desde que se acciona hasta que el checkback confirma el ciclo completo
+// (en un pulso, hasta verificar que el pin volvio al reposo y avisar al servidor). Si la lectura del pin
+// no coincide con lo pedido queda en falla hasta el proximo comando.
+uint8_t canalesLedModo() {
+  uint8_t modo = 0;
+  for (int i = 0; i < n; i++) {
+    const Canal& c = canales[i];
+    if (c.kind != Kind::Rele) continue;
+    if (!c.rbUlt || !c.rbFinOk) return 2;
+    if (c.activo || c.finPulso) modo = 1;
+  }
+  return modo;
 }
 
 void canalesPublicarTodo() {
