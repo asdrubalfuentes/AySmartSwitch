@@ -126,42 +126,76 @@ ResultadoOta actualizarSiHayNueva(const char* owner, const char* repo, const cha
   canalesGuardarCiclos(true);
 
   urlAsset(owner, repo, "firmware-" FW_TARGET ".bin", url, sizeof(url));
-  WiFiClientSecure sec;
-  HTTPClient http;
-  prepararHttp(http, sec, url);
-  if (http.GET() != HTTP_CODE_OK) { http.end(); fallo(r, "descarga del firmware fallo"); return r; }
-  int total = http.getSize();
-  if (!Update.begin(total > 0 ? (size_t)total : UPDATE_SIZE_UNKNOWN)) { http.end(); fallo(r, "Update.begin fallo"); return r; }
 
   mbedtls_sha256_context sha;
   mbedtls_sha256_init(&sha);
   mbedtls_sha256_starts(&sha, 0);
 
-  WiFiClient* flujo = http.getStreamPtr();
+  // La descarga se REANUDA: si la conexion se corta o se estanca a mitad de archivo (WiFi debil), se vuelve a
+  // pedir desde el ultimo byte recibido con "Range", sin reiniciar. El SHA-256 y la escritura siguen de corrido.
   uint8_t buf[1024];
   size_t escritos = 0;
-  uint32_t ultimoDato = millis();
-  uint32_t ultimoLed = 0;
+  int total = 0;
   bool error = false;
-  while (true) {
-    size_t disp = flujo->available();
-    if (disp) {
-      int n = flujo->readBytes(buf, disp < sizeof(buf) ? disp : sizeof(buf));
-      if (n <= 0 || (int)Update.write(buf, n) != n) { error = true; break; }
-      mbedtls_sha256_update(&sha, buf, n);
-      escritos += n;
-      ultimoDato = millis();
-      esp_task_wdt_reset();
-      // LED integrado: parpadeo muy rapido mientras se descarga el firmware.
-      if (millis() - ultimoLed >= 80) { ultimoLed = millis(); ledOta(!ledOtaEncendido); }
-      if (total > 0 && escritos >= (size_t)total) break;
-    } else {
-      if (!flujo->connected()) break;
-      if (millis() - ultimoDato > 20000) { error = true; break; }
-      delay(1);
+  uint32_t ultimoLed = 0;
+  int ultimoPct = -1;
+  for (int intento = 0; intento < 10 && !error; intento++) {
+    WiFiClientSecure sec;
+    HTTPClient http;
+    prepararHttp(http, sec, url);
+    if (escritos) {
+      char rango[32];
+      snprintf(rango, sizeof(rango), "bytes=%u-", (unsigned)escritos);
+      http.addHeader("Range", rango);
     }
+    int codigo = http.GET();
+    if (codigo != HTTP_CODE_OK && codigo != HTTP_CODE_PARTIAL_CONTENT) {
+      http.end();
+      Serial.printf("[ota] descarga: respuesta HTTP %d (intento %d)\n", codigo, intento + 1);
+      if (!escritos && intento >= 2) { error = true; break; }
+      delay(2000);
+      continue;
+    }
+    if (!escritos) {
+      total = http.getSize();
+      if (!Update.begin(total > 0 ? (size_t)total : UPDATE_SIZE_UNKNOWN)) { http.end(); mbedtls_sha256_free(&sha); fallo(r, "Update.begin fallo"); return r; }
+      Serial.printf("[ota] descargando %d bytes\n", total);
+    } else if (codigo == HTTP_CODE_OK) {
+      http.end();            // el servidor ignoro el rango: no se puede reanudar
+      error = true;
+      break;
+    }
+    WiFiClient* flujo = http.getStreamPtr();
+    uint32_t ultimoDato = millis();
+    while (true) {
+      size_t disp = flujo->available();
+      if (disp) {
+        int n = flujo->readBytes(buf, disp < sizeof(buf) ? disp : sizeof(buf));
+        if (n <= 0 || (int)Update.write(buf, n) != n) { error = true; break; }
+        mbedtls_sha256_update(&sha, buf, n);
+        escritos += n;
+        ultimoDato = millis();
+        esp_task_wdt_reset();
+        // LED integrado: parpadeo muy rapido mientras se descarga el firmware.
+        if (millis() - ultimoLed >= 80) { ultimoLed = millis(); ledOta(!ledOtaEncendido); }
+        if (total > 0) {
+          int pct = (int)(escritos * 100 / (size_t)total);
+          if (pct / 10 != ultimoPct / 10) { ultimoPct = pct; Serial.printf("[ota] %d%% (%u bytes)\n", pct, (unsigned)escritos); }
+          if (escritos >= (size_t)total) break;
+        }
+      } else {
+        if (!flujo->connected()) break;
+        if (millis() - ultimoDato > 10000) break;     // estancada: se reintenta desde donde quedo
+        delay(1);
+        esp_task_wdt_reset();
+      }
+    }
+    http.end();
+    if (total > 0 && escritos >= (size_t)total) break;
+    if (error) break;
+    Serial.printf("[ota] descarga interrumpida en %u de %d bytes; se reanuda (intento %d)\n", (unsigned)escritos, total, intento + 2);
+    delay(1500);
   }
-  http.end();
 
   ledOta(true);   // descarga terminada: encendido fijo mientras se verifica
   uint8_t digest[32];

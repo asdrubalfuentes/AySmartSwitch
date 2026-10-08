@@ -5,7 +5,7 @@
 #ifdef FW_VERSION_OVERRIDE
 #define FW_VERSION FW_VERSION_OVERRIDE
 #else
-#define FW_VERSION "2.0.1"
+#define FW_VERSION "2.0.2"
 #endif
 
 // ---- Placa (la define platformio.ini) ----
